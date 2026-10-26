@@ -16,6 +16,7 @@ export type Entry = {
   pending: number;
   in_progress: number;
   done: number;
+  planned: number;
   created_at: string;
 };
 
@@ -26,6 +27,9 @@ export const input =
   "h-11 rounded-lg border border-zinc-200 bg-white px-3 text-base outline-none focus:border-zinc-900";
 export const button =
   "h-11 rounded-lg bg-zinc-900 px-4 font-medium text-white active:scale-[0.98] disabled:opacity-40";
+// Small outlined button; add a border + text colour at the call site.
+export const ghost =
+  "h-8 shrink-0 rounded-md border bg-white px-3 text-xs font-medium active:scale-[0.98] disabled:opacity-40";
 
 // Runs load now and again whenever any entry changes, from any device.
 export function useLive(load: () => void) {
@@ -81,7 +85,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <>
       <header className="mb-8 flex items-center gap-3 text-sm text-zinc-400">
         <span className="truncate">{session.user.email}</span>
-        <button onClick={() => supabase.auth.signOut()} className="ml-auto shrink-0">
+        <button onClick={() => supabase.auth.signOut()} className={`${ghost} ml-auto border-zinc-200 text-zinc-700`}>
           Sign out
         </button>
       </header>

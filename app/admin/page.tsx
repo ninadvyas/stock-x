@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { supabase, useLive, useToast, input, today } from "../shared";
+import { supabase, useLive, useToast, ghost, input, today } from "../shared";
 
 type Row = { name: string; opening: number; ready: number; closing: number; pending: number; in_progress: number };
 const PER_PAGE = 5;
@@ -62,12 +62,12 @@ export default function Admin() {
           <p className="text-sm text-zinc-400">
             {isToday ? "Today, " : ""}
             {new Date(`${day}T00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
-            {!isToday && (
-              <button onClick={() => goDay(today())} className="ml-2 font-medium text-zinc-900 underline">
-                Back to today
-              </button>
-            )}
           </p>
+          {!isToday && (
+            <button onClick={() => goDay(today())} className={`${ghost} mt-2 border-zinc-200 text-zinc-700`}>
+              ← Back to today
+            </button>
+          )}
         </div>
         <input
           type="date"

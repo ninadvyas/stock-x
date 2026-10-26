@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState, type FormEvent } from "react";
-import { supabase, useLive, useToast, button, input, type Entry } from "./shared";
+import { useCallback, useRef, useState, type FormEvent } from "react";
+import { supabase, useLive, useToast, button, ghost, input, type Entry } from "./shared";
 
 type Row = { name: string; qty: string };
 const blank = (): Row => ({ name: "", qty: "" });
@@ -83,7 +83,7 @@ export default function Production() {
                   type="button"
                   aria-label="Remove row"
                   onClick={() => setRows(rows.filter((_, j) => j !== i))}
-                  className="h-11 w-8 shrink-0 text-xl text-zinc-400"
+                  className="h-11 w-11 shrink-0 rounded-lg border border-zinc-200 text-xl text-zinc-500 active:scale-[0.98]"
                 >
                   ×
                 </button>
@@ -115,7 +115,7 @@ export default function Production() {
         {entries.length === 0 && <p className="text-zinc-400">Nothing in production.</p>}
         <ul className="grid gap-3">
           {entries.map((e) => (
-            <Card key={`${e.id}-${e.in_progress}-${e.done}`} e={e} show={show} reload={load} />
+            <Card key={`${e.id}-${e.planned}-${e.in_progress}-${e.done}`} e={e} show={show} reload={load} />
           ))}
         </ul>
       </section>
@@ -126,28 +126,47 @@ export default function Production() {
 
 // Keyed on saved counts, so a change from another device resets the inputs.
 function Card({ e, show, reload }: { e: Entry; show: (m: string) => void; reload: () => void }) {
+  const [planned, setPlanned] = useState(String(e.planned));
   const [ip, setIp] = useState(String(e.in_progress));
   const [done, setDone] = useState(String(e.done));
   const [busy, setBusy] = useState(false);
 
-  const pending = e.qty - Number(ip) - Number(done);
-  const valid = [ip, done].every((v) => Number.isInteger(Number(v)) && Number(v) >= 0) && pending >= 0;
-  const dirty = Number(ip) !== e.in_progress || Number(done) !== e.done;
+  // Today production is out of qty; in progress + ready come out of today production.
+  const [pl, i, d] = [planned, ip, done].map(Number);
+  const problem = ![pl, i, d].every((v) => Number.isInteger(v) && v >= 0)
+    ? "Enter whole numbers."
+    : pl > e.qty
+      ? `Today production can’t be more than ${e.qty}.`
+      : i + d > pl
+        ? `In progress + ready material can’t be more than today production (${pl}).`
+        : "";
+  const dirty = pl !== e.planned || i !== e.in_progress || d !== e.done;
 
   async function save() {
     setBusy(true);
     const { error } = await supabase
       .from("entries")
-      .update({ pending, in_progress: Number(ip), done: Number(done) })
+      .update({ planned: pl, pending: e.qty - i - d, in_progress: i, done: d })
       .eq("id", e.id);
     setBusy(false);
     show(error ? error.message : `✓ ${e.name} updated`);
     if (!error) reload();
   }
 
+  // Runs only from the confirm dialog's Delete button.
+  const confirmDlg = useRef<HTMLDialogElement>(null);
+  async function remove() {
+    setBusy(true);
+    const { error } = await supabase.from("entries").delete().eq("id", e.id);
+    setBusy(false);
+    confirmDlg.current?.close();
+    show(error ? error.message : `✓ ${e.name} deleted`);
+    if (!error) reload();
+  }
+
   const pct = (n: number) => `${(n / e.qty) * 100}%`;
   const field = (label: string, value: string, onChange: (v: string) => void) => (
-    <label className="grid gap-1 text-xs text-zinc-500">
+    <label className="flex flex-col justify-end gap-1 text-xs text-zinc-500">
       {label}
       <input
         type="number"
@@ -164,40 +183,83 @@ function Card({ e, show, reload }: { e: Entry; show: (m: string) => void; reload
 
   return (
     <li className="rounded-xl border border-zinc-200 p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate font-medium">{e.name}</span>
-        <span className="shrink-0 text-sm tabular-nums text-zinc-500">
-          {e.done}/{e.qty} ready
-        </span>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate font-medium">{e.name}</div>
+          <div className="mt-0.5 text-xs text-zinc-400">
+            {new Date(e.created_at).toLocaleString(undefined, {
+              day: "numeric",
+              month: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </div>
+        </div>
+        <button
+          onClick={() => confirmDlg.current?.showModal()}
+          disabled={busy}
+          className={`${ghost} border-red-200 text-red-600`}
+        >
+          Delete
+        </button>
       </div>
-      <p className="mt-0.5 text-xs text-zinc-400">
-        {new Date(e.created_at).toLocaleString(undefined, {
-          day: "numeric",
-          month: "short",
-          hour: "numeric",
-          minute: "2-digit",
-        })}
-      </p>
-      <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-zinc-100">
+      <div className="mt-4 text-right text-sm tabular-nums text-zinc-500">
+        <b className="font-semibold text-zinc-900">
+          {e.done}/{e.qty}
+        </b>{" "}
+        ready
+      </div>
+      <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-zinc-100">
         <div className="bg-emerald-500" style={{ width: pct(e.done) }} />
         <div className="bg-amber-400" style={{ width: pct(e.in_progress) }} />
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <div className="grid gap-1 text-xs text-zinc-500">
-          Pending
-          <div className={`flex h-11 items-center rounded-lg bg-zinc-50 px-3 text-base tabular-nums ${pending < 0 ? "text-red-600" : "text-zinc-900"}`}>
-            {pending}
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="flex flex-col justify-end gap-1 text-xs text-zinc-500">
+          Quantity
+          <div className="flex h-11 items-center rounded-lg bg-zinc-100 px-3 text-base font-semibold tabular-nums text-zinc-900">
+            {e.qty}
           </div>
         </div>
+        {field("Today production", planned, setPlanned)}
         {field("In progress", ip, setIp)}
-        {field("Done", done, setDone)}
+        {field("Ready material", done, setDone)}
       </div>
-      {!valid && <p className="mt-2 text-sm text-red-600">In progress + done can’t be more than {e.qty}.</p>}
+      {problem ? (
+        <p className="mt-2 text-sm text-red-600">{problem}</p>
+      ) : (
+        pl - i - d > 0 && (
+          <p className="mt-2 text-xs text-zinc-500 tabular-nums">
+            {pl - i - d} of today’s {pl} not started yet
+          </p>
+        )
+      )}
       {dirty && (
-        <button onClick={save} disabled={!valid || busy} className={`${button} mt-3 w-full`}>
+        <button onClick={save} disabled={!!problem || busy} className={`${button} mt-3 w-full`}>
           {busy ? "Saving…" : "Save"}
         </button>
       )}
+
+      <dialog
+        ref={confirmDlg}
+        className="m-auto w-[min(90vw,360px)] rounded-2xl bg-white p-5 text-zinc-900 shadow-xl backdrop:bg-black/40"
+      >
+        <h3 className="text-lg font-semibold">Delete “{e.name}”?</h3>
+        <p className="mt-1 text-sm text-zinc-500">
+          Quantity {e.qty}.
+          {e.done > 0 && ` Its ${e.done} ready material will be removed from stock.`} This can’t be undone.
+        </p>
+        <form method="dialog" className="mt-5 flex gap-2">
+          <button className="h-11 flex-1 rounded-lg border border-zinc-200 font-medium">Cancel</button>
+          <button
+            type="button"
+            onClick={remove}
+            disabled={busy}
+            className="h-11 flex-1 rounded-lg bg-red-600 font-medium text-white disabled:opacity-40"
+          >
+            {busy ? "Deleting…" : "Delete"}
+          </button>
+        </form>
+      </dialog>
     </li>
   );
 }
