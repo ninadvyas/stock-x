@@ -1,29 +1,54 @@
 "use client";
 
 import { useCallback, useRef, useState, type FormEvent } from "react";
-import { supabase, useLive, useToast, button, ghost, input, type Entry } from "./shared";
+import {
+  DayHeader,
+  supabase,
+  useLive,
+  usePaged,
+  useToast,
+  today,
+  button,
+  ghost,
+  input,
+  type Entry,
+} from "./shared";
 
 type Row = { name: string; qty: string };
 const blank = (): Row => ({ name: "", qty: "" });
+
+// e.g. "26 Oct, 11:27 PM"
+const when = (iso: string) => {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  return `${date}, ${time}`;
+};
 
 export default function Production() {
   const [rows, setRows] = useState<Row[]>([blank()]);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
   const [toast, show] = useToast();
+  // Staff keep the date the page opened with; only admin follows the clock past midnight.
+  const [now] = useState(today);
+  const [picked, setPicked] = useState("");
+  const day = picked || now;
+  const { shown, search, pager, empty, toFirstPage } = usePaged(entries);
 
-  // Anything not finished, plus everything added today.
+  // Today: anything not finished, plus everything added today. Past day: what was added that day.
   const load = useCallback(async () => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const { data, error } = await supabase
-      .from("entries")
-      .select("*")
-      .or(`pending.gt.0,in_progress.gt.0,created_at.gte."${start.toISOString()}"`)
-      .order("created_at", { ascending: false });
+    const start = new Date(`${day}T00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    let query = supabase.from("entries").select("*");
+    query = picked
+      ? query.gte("created_at", start.toISOString()).lt("created_at", end.toISOString())
+      : query.or(`pending.gt.0,in_progress.gt.0,created_at.gte."${start.toISOString()}"`);
+    const { data, error } = await query.order("created_at", { ascending: false });
     if (error) show(error.message);
     else setEntries(data);
-  }, [show]);
+  }, [day, picked, show]);
   useLive(load);
 
   const set = (i: number, patch: Partial<Row>) =>
@@ -39,7 +64,9 @@ export default function Production() {
     if (error) return show(error.message);
     show(`✓ ${rows.length} item${rows.length > 1 ? "s" : ""} added`);
     setRows([blank()]);
-    load();
+    // Jump back to today so the new items show; changing the day reloads by itself.
+    if (picked) setPicked("");
+    else load();
   }
 
   const names = [...new Set(entries.map((e) => e.name))];
@@ -111,13 +138,28 @@ export default function Production() {
       </section>
 
       <section className="mt-12">
-        <h2 className="mb-3 text-lg font-semibold">In production</h2>
-        {entries.length === 0 && <p className="text-zinc-400">Nothing in production.</p>}
-        <ul className="grid gap-3">
-          {entries.map((e) => (
-            <Card key={`${e.id}-${e.planned}-${e.in_progress}-${e.done}`} e={e} show={show} reload={load} />
-          ))}
-        </ul>
+        <DayHeader
+          title="Production"
+          now={now}
+          picked={picked}
+          onPick={(d) => {
+            setPicked(d);
+            toFirstPage();
+          }}
+        />
+        <div className="mt-4">{search}</div>
+        {shown.length === 0 ? (
+          <p className="py-8 text-center text-zinc-400">
+            {empty(picked ? "Nothing added this day." : "Nothing in production.")}
+          </p>
+        ) : (
+          <ul className="mt-3 grid gap-3">
+            {shown.map((e) => (
+              <Card key={`${e.id}-${e.planned}-${e.in_progress}-${e.done}`} e={e} show={show} reload={load} />
+            ))}
+          </ul>
+        )}
+        {pager}
       </section>
       {toast}
     </>
@@ -186,13 +228,8 @@ function Card({ e, show, reload }: { e: Entry; show: (m: string) => void; reload
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate font-medium">{e.name}</div>
-          <div className="mt-0.5 text-xs text-zinc-400">
-            {new Date(e.created_at).toLocaleString(undefined, {
-              day: "numeric",
-              month: "short",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
+          <div className="mt-1 inline-block rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 tabular-nums">
+            {when(e.created_at)}
           </div>
         </div>
         <button

@@ -31,7 +31,8 @@ export const button =
 export const ghost =
   "h-8 shrink-0 rounded-md border bg-white px-3 text-xs font-medium active:scale-[0.98] disabled:opacity-40";
 
-// Runs load now and again whenever any entry changes, from any device.
+// Runs load now, whenever any entry changes from any device, and when the app is reopened
+// (a sleeping phone misses live updates).
 export function useLive(load: () => void) {
   useEffect(() => {
     load();
@@ -39,8 +40,96 @@ export function useLive(load: () => void) {
       .channel(`entries-${Math.random()}`) // crypto.randomUUID needs https; phones on LAN use http
       .on("postgres_changes", { event: "*", schema: "public", table: "entries" }, load)
       .subscribe();
-    return () => void supabase.removeChannel(ch);
+    const onShow = () => document.visibilityState === "visible" && load();
+    document.addEventListener("visibilitychange", onShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onShow);
+      void supabase.removeChannel(ch);
+    };
   }, [load]);
+}
+
+// Today's date, rolling over by itself at midnight.
+export function useToday() {
+  const [d, setD] = useState(today);
+  useEffect(() => {
+    const t = setInterval(() => setD(today()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return d;
+}
+
+// Title + date picker. picked "" means today, so the screen follows the clock past midnight.
+export function DayHeader(props: { title: string; now: string; picked: string; onPick: (d: string) => void }) {
+  const { title, now, picked, onPick } = props;
+  const day = picked || now;
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <p className="text-sm text-zinc-400">
+          {picked ? "" : "Today, "}
+          {new Date(`${day}T00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+        </p>
+        {picked && (
+          <button onClick={() => onPick("")} className={`${ghost} mt-2 border-zinc-200 text-zinc-700`}>
+            ← Back to today
+          </button>
+        )}
+      </div>
+      <input
+        type="date"
+        aria-label="Day"
+        value={day}
+        max={now}
+        onChange={(e) => onPick(e.target.value === now ? "" : e.target.value)}
+        className={`${input} shrink-0`}
+      />
+    </div>
+  );
+}
+
+const PER_PAGE = 5;
+const pagerBtn = "h-10 rounded-lg border border-zinc-200 px-4 text-sm font-medium disabled:opacity-30";
+
+// Name search + 5 per page with Prev / Next.
+export function usePaged<T extends { name: string }>(items: T[]) {
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(0);
+  const term = q.trim().toLowerCase();
+  const found = items.filter((r) => r.name.toLowerCase().includes(term));
+  const pages = Math.max(1, Math.ceil(found.length / PER_PAGE));
+  const p = Math.min(page, pages - 1);
+  const shown = found.slice(p * PER_PAGE, (p + 1) * PER_PAGE);
+
+  const search = (
+    <input
+      type="search"
+      placeholder="Search item"
+      aria-label="Search item"
+      value={q}
+      onChange={(e) => {
+        setQ(e.target.value);
+        setPage(0);
+      }}
+      className={`${input} w-full`}
+    />
+  );
+  const pager = found.length > 0 && (
+    <div className="mt-4 flex items-center justify-between">
+      <button disabled={p === 0} onClick={() => setPage(p - 1)} className={pagerBtn}>
+        ← Prev
+      </button>
+      <span className="text-sm text-zinc-500 tabular-nums">
+        {p * PER_PAGE + 1}–{p * PER_PAGE + shown.length} of {found.length}
+      </span>
+      <button disabled={p >= pages - 1} onClick={() => setPage(p + 1)} className={pagerBtn}>
+        Next →
+      </button>
+    </div>
+  );
+  const empty = (fallback: string) => (term ? `No item matches “${q.trim()}”` : fallback);
+  return { shown, search, pager, empty, toFirstPage: () => setPage(0) };
 }
 
 export function useToast() {
